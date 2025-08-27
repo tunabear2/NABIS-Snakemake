@@ -1,0 +1,6 @@
+sandboxes:
+  fastp: "/s1/home/extRDA/tjbae/snakemake/sandbox/fastp_sandbox"
+  bwa: "/s1/home/extRDA/tjbae/snakemake/sandbox/bwa_sandbox"
+  samtools: "/s1/home/extRDA/tjbae/snakemake/sandbox/samtools_sandbox"
+  picard: "/s1/home/extRDA/tjbae/snakemake/sandbox/picard_sandbox"
+  gatk: "/s1/home/extRDA/tjbae/snakemake/sandbox/gatk_sandbox"
