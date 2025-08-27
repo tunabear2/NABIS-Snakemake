@@ -1,0 +1,227 @@
+import yaml
+
+def load_yaml(path):
+        with open(path) as f:
+                return yaml.safe_load(f)
+
+config_directory = load_yaml("config/directory.yaml")
+config_tools = load_yaml("config/tools.yaml")
+config_reference = load_yaml("config/reference.yaml")
+config_resources = load_yaml("config/resources.yaml")
+
+config = {**config_directory, **config_tools, **config_reference, **config_resources}
+
+import os
+
+rowdata_dir = config["rowdata_dir"]
+SAMPLES, = glob_wildcards(os.path.join(rowdata_dir, "{sample}_1.fastq"))
+
+CHROMOSOMES = config["chromosomes"]
+
+def bwa_rg(sample, platform="ILLUMINA"):
+        rg_id = f"{sample}_RG"
+        lb = f""
+        pu = f""
+        return f"'@RG\\tID:{rg_id}\\tSM:{sample}\\tPL:{platform}\\tLB:{lb}\\tPU:{pu}'"
+
+rule all:
+        input:
+                expand("{trimmed_dir}/{sample}_R1.trimmed.fastq", trimmed_dir=config["trimmed_dir"], sample=SAMPLES),
+                expand("{trimmed_dir}/{sample}_R2.trimmed.fastq", trimmed_dir=config["trimmed_dir"], sample=SAMPLES),
+                expand("{mapped_dir}/{sample}.sam", mapped_dir=config["mapped_dir"], sample=SAMPLES),
+                expand("{samtools_dir}/{sample}.sorted.bam", samtools_dir=config["samtools_dir"], sample=SAMPLES),
+                expand("{picard_dir}/{sample}.marked.bam", picard_dir=config["picard_dir"], sample=SAMPLES),
+                expand("{picard_dir}/{sample}.metrics.txt", picard_dir=config["picard_dir"], sample=SAMPLES),
+                expand("{samtools_dir}/{sample}.marked.flagstat.txt", samtools_dir=config["samtools_dir"], sample=SAMPLES),
+                expand("{picard_dir}/{sample}.marked.bam.bai", picard_dir=config["picard_dir"], sample=SAMPLES),
+                expand("results/gatk/{sample}_recal.table", sample=SAMPLES),
+                expand("results/gatk/{sample}_bqsr.bam", sample=SAMPLES),
+                expand("results/gatk/{sample}_{chr}.gvcf.gz", sample=SAMPLES, chr=config["chromosomes"]),
+                expand("results/gatk/{sample}.g.vcf.gz", sample=SAMPLES),
+                expand("results/gatk/{sample}.vcf.gz", sample=SAMPLES),
+                expand("results/gatk/{sample}.recal", sample=SAMPLES),
+                expand("results/gatk/{sample}.tranches", sample=SAMPLES),
+                expand("results/gatk/{sample}.plots.R", sample=SAMPLES),
+                expand("results/gatk/{sample}_apply.vcf.gz", sample=SAMPLES),
+                expand("results/gatk/{sample}_indel.recal", sample=SAMPLES),
+                expand("results/gatk/{sample}_indel.tranches", sample=SAMPLES),
+                expand("results/gatk/{sample}_indel.plots.R", sample=SAMPLES),
+                expand("results/gatk/{sample}_final.vcf.gz", sample=SAMPLES)
+rule fastp:
+        input:
+                r1 = lambda wildcards: f"data/fastq/{wildcards.sample}_1.fastq",
+                r2 = lambda wildcards: f"data/fastq/{wildcards.sample}_2.fastq"
+        output:
+                r1_trimmed = "results/fastp/{sample}_R1.trimmed.fastq",
+                r2_trimmed = "results/fastp/{sample}_R2.trimmed.fastq",
+                html = "results/fastp/{sample}.html",
+                json = "results/fastp/{sample}.json"
+        threads: config["threads"].get("fastp", 6)
+        shell:
+               'bash scripts/aprun_sing.sh 1 {threads} {config[sandboxes][fastp]} "fastp -i {input.r1} -I {input.r2} -o {output.r1_trimmed} -O {output.r2_trimmed} --html {output.html} --json {output.json}"'
+rule bwa_mem:
+        input:
+                ref = config["ref"],
+                r1 = lambda wildcards: f"{config['trimmed_dir']}/{wildcards.sample}_R1.trimmed.fastq",
+                r2 = lambda wildcards: f"{config['trimmed_dir']}/{wildcards.sample}_R2.trimmed.fastq"
+        output:
+                sam = "{mapped_dir}/{sample}.sam"
+        params:
+                rg = lambda wc: bwa_rg(wc.sample)
+        threads : config["threads"].get("bwa",12)
+        shell:
+                'bash scripts/aprun_sing.sh 1 {threads} {config[sandboxes][bwa]} "bwa mem -R {params.rg} {input.ref} {input.r1} {input.r2} > {output.sam}"'
+rule sort_bam:
+        input:
+                lambda wc: f"{config['mapped_dir']}/{wc.sample}.sam"
+        output:
+                sorted_bam = "{samtools_dir}/{sample}.sorted.bam"
+	threads : config["threads"].get("samtools",6)
+        shell:
+                'bash scripts/aprun_sing.sh 1 {threads} {config[sandboxes][samtools]}"samtools sort {input} -o {output.sorted_bam}"
+rule Marked_bam:
+        input:
+                lambda wc: f"{config['samtools_dir']}/{wc.sample}.sorted.bam"
+        output:
+                MarkDuplicates_bam = "{picard_dir}/{sample}.marked.bam",
+                metrics = "{picard_dir}/{sample}.metrics.txt"
+        singularity:
+                config["containers"]["picard"]
+        shell:
+                "java -jar /usr/picard/picard.jar MarkDuplicates I={input} O={output.MarkDuplicates_bam} M={output.metrics} VALIDATION_STRINGENCY=LENIENT REMOVE_DUPLICATES=false ASSUME_SORTED=true"
+rule flagstat:
+        input:
+                lambda wc: f"{config['picard_dir']}/{wc.sample}.marked.bam"
+        output:
+                flag_bam = "{samtools_dir}/{sample}.marked.flagstat.txt"
+        singularity:
+                config["containers"]["samtools"]
+        shell:
+                "samtools flagstat {input} > {output.flag_bam}"
+rule index_bam:
+        input:
+                lambda wc: f"{config['picard_dir']}/{wc.sample}.marked.bam"
+        output:
+                indexing_bam = "{picard_dir}/{sample}.marked.bam.bai"
+        singularity:
+                config["containers"]["samtools"]
+        shell:
+                "samtools index {input}"
+rule gatk_base_recalibrator:
+        input:
+                marked_bam = lambda wc: f"{config['picard_dir']}/{wc.sample}.marked.bam",
+                marked_bai = lambda wc: f"{config['picard_dir']}/{wc.sample}.marked.bam.bai",
+                ref = config["ref"],
+                known_sites = config["known_sites"]
+        output:
+                table = "results/gatk/{sample}_recal.table"
+        singularity:
+                config["containers"]["gatk"]
+        params:
+                known_sites_flags = lambda wildcards, input: " ".join([f"--known-sites {vcf}" for vcf in input.known_sites])
+        shell:
+                "gatk BaseRecalibrator -I {input.marked_bam} -R {input.ref} {params.known_sites_flags} -O {output.table}"
+rule gatk_apply_bqsr:
+        input:
+                marked_bam = lambda wc: f"{config['picard_dir']}/{wc.sample}.marked.bam",
+                table = lambda wc: f"{config['gatk_dir']}/{wc.sample}_recal.table",
+                ref = config["ref"]
+        output:
+                bqsr_bam = "results/gatk/{sample}_bqsr.bam"
+        singularity:
+                config["containers"]["gatk"]
+        shell:
+                "gatk ApplyBQSR -R {input.ref} -I {input.marked_bam} --bqsr-recal-file {input.table} -O {output.bqsr_bam} --create-output-bam-index true"
+rule gatk_haplotypecaller:
+        input:
+                bqsr_bam = lambda wc: f"{config['gatk_dir']}/{wc.sample}_bqsr.bam",
+                ref = config["ref"]
+        output:
+                haplo_bam = "results/gatk/{sample}_{chr}.gvcf.gz"
+        singularity:
+                config["containers"]["gatk"]
+        threads: config["threads"]["haplotypecaller"]
+        params:
+                chr = lambda wc: wc.chr
+        shell:
+                "gatk HaplotypeCaller -R {input.ref} -I {input.bqsr_bam} -O {output.haplo_bam} -L {params.chr} -ERC GVCF --annotation-group StandardAnnotation"
+rule CombineGVCFs:
+        input:
+                gvcfs = lambda wc: expand("results/gatk/{sample}_{chr}.gvcf.gz", sample=wc.sample, chr=CHROMOSOMES),
+                ref = config["ref"]
+        output:
+                merged_gvcf = "results/gatk/{sample}.g.vcf.gz"
+        singularity:
+                config["containers"]["gatk"]
+        params:
+                gvcf_flags = lambda wc: " ".join(f"-V {gvcf}" for gvcf in expand("results/gatk/{sample}_{chr}.gvcf.gz", sample=wc.sample, chr=CHROMOSOMES))
+        shell:
+                "gatk CombineGVCFs -R {input.ref} {params.gvcf_flags} -O {output.merged_gvcf}"
+rule genotypeGVCFs:
+        input:
+                ref = config["ref"],
+                gvcf = lambda wc: f"{config['gatk_dir']}/{wc.sample}.g.vcf.gz"
+        output:
+                vcf = "results/gatk/{sample}.vcf.gz"
+        singularity:
+                config["containers"]["gatk"]
+        shell:
+                "gatk GenotypeGVCFs -R {input.ref} -V {input.gvcf} -O {output.vcf}"
+rule RecaliVQSR:
+        input:
+                ref = config["ref"],
+                vcf = lambda wc: f"{config['gatk_dir']}/{wc.sample}.vcf.gz",
+                hapmap = config["hapmap"],
+                omni = config["omni"],
+                g1000 = config["1000G"],
+                dbsnp = config["dbsnp"]
+        output:
+                recal = "results/gatk/{sample}.recal",
+                tranche = "results/gatk/{sample}.tranches",
+                plots = "results/gatk/{sample}.plots.R"
+        singularity:
+                config["containers"]["gatk"]
+        shell:
+                "gatk VariantRecalibrator -R {input.ref} -V {input.vcf} --resource:hapmap,known=false,training=true,truth=true,prior=15.0 {input.hapmap} --resource:omni,known=false,training=true,truth=false,prior=12.0 {input.omni} --resource:1000G,known=false,training=true,truth=false,prior=10.0 {input.g1000} --resource:dbsnp,known=true,training=false,truth=false,prior=2.0 {input.dbsnp} -an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -mode SNP -O {output.recal} --tranches-file {output.tranche} --rscript-file {output.plots}"
+rule ApplyVQSR:
+        input:
+                ref = config["ref"],
+                vcf = lambda wc: f"{config['gatk_dir']}/{wc.sample}.vcf.gz",
+                recal = lambda wc: f"{config['gatk_dir']}/{wc.sample}.recal",
+                tranche = lambda wc: f"{config['gatk_dir']}/{wc.sample}.tranches"
+        output:
+                applyvcf = "results/gatk/{sample}_apply.vcf.gz"
+        singularity:
+                config["containers"]["gatk"]
+        params:
+                sensitivity = config["sensitivity"]["snp"]
+        shell:
+                "gatk ApplyVQSR -R {input.ref} -V {input.vcf} -mode SNP --recal-file {input.recal} --tranches-file {input.tranche} --truth-sensitivity-filter-level {params.sensitivity} -O {output.applyvcf}"
+rule indelsrecal:
+        input:
+                ref = config["ref"],
+                snpvcf = lambda wc: f"{config['gatk_dir']}/{wc.sample}_apply.vcf.gz",
+                mill = config["mills"],
+                dbsnp = config["dbsnp"]
+        output:
+                indelrecal = "results/gatk/{sample}_indel.recal",
+                indeltranche = "results/gatk/{sample}_indel.tranches",
+                indelplots = "results/gatk/{sample}_indel.plots.R"
+        singularity:
+                config["containers"]["gatk"]
+        shell:
+                "gatk VariantRecalibrator -R {input.ref} -V {input.snpvcf} --resource:mills,known=false,training=true,truth=true,prior=12.0 {input.mill} --resource:dbsnp,known=true,training=false,truth=false,prior=2.0 {input.dbsnp} -an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -mode INDEL -O {output.indelrecal} --tranches-file {output.indeltranche} --rscript-file {output.indelplots}"
+rule indelapply:
+        input:
+                ref = config["ref"],
+                snpvcf = lambda wc: f"{config['gatk_dir']}/{wc.sample}_apply.vcf.gz",
+                indelrecal = lambda wc: f"{config['gatk_dir']}/{wc.sample}_indel.recal",
+                indeltranche = lambda wc: f"{config['gatk_dir']}/{wc.sample}_indel.tranches"
+        output:
+                finalvcf = "results/gatk/{sample}_final.vcf.gz"
+        singularity:
+                config["containers"]["gatk"]
+        params:
+                sensi = config["sensitivity"]["indel"]
+        shell:
+                "gatk ApplyVQSR -R {input.ref} -V {input.snpvcf} -mode INDEL --recal-file {input.indelrecal} --tranches-file {input.indeltranche} --truth-sensitivity-filter-level {params.sensi} -O {output.finalvcf}"
