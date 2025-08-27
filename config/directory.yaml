@@ -1,0 +1,6 @@
+rowdata_dir: data/fastq
+trimmed_dir: results/fastp
+mapped_dir: results/bwa
+samtools_dir: results/samtools
+picard_dir: results/picard
+gatk_dir: results/gatk
