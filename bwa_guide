@@ -1,0 +1,36 @@
+#!/bin/bash
+
+bwa="/s3/opt/bin/bwa"
+ref_name="/s1/home/extRDA/tjbae/snakemake/data/reference/Homo_sapiens_assembly38.fasta"
+
+${bwa} mem -t 8 ${ref_name} r1_trimmed.fastq r2_trimmed.fastq > SRR34149117.sam
+
+이건 PBS 제출 스크립트
+#!/bin/bash
+
+#PBS -N bwaaa
+#PBS -l select=9:ncpus=8
+#PBS -l walltime=36:00:00
+#PBS -j oe
+#PBS -V
+
+cd $PBS_O_WORKDIR
+aprun -n 9 -N 1 -d 8 bash bwa_script.sh
+
+#!/bin/bash
+
+#PBS -N bwaaa
+#PBS -l select=9:ncpus=8
+#PBS -l walltime=36:00:00
+#PBS -j oe
+#PBS -V
+
+
+제출 전 해야할 것
+module use /s3/opt/modulefiles/
+tjbae@ngate1:~/snakemake/data/fastq> module load singularity/2.6.1 
+tjbae@ngate1:~/snakemake/data/fastq> singularity exec -B /s3/:/s3/ /s3/simg/ubuntu02 bash -c "export MAMBA_ROOT_PREFIX=/opt/miniconda/ && micromamba run -n bio01-env bash -c 'python --version'"
+Python 3.10.17
+tjbae@ngate1:~/snakemake/data/fastq> singularity exec -B /s3/:/s3/ /s3/simg/ubuntu02 bash -c "export MAMBA_ROOT_PREFIX=/opt/miniconda/ && micromamba run -n bio03-env bash -c 'bwa mem'"
+
+
