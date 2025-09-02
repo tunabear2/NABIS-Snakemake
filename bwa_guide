@@ -1,11 +1,4 @@
-#!/bin/bash
-
-bwa="/s3/opt/bin/bwa"
-ref_name="/s1/home/extRDA/tjbae/snakemake/data/reference/Homo_sapiens_assembly38.fasta"
-
-${bwa} mem -t 8 ${ref_name} r1_trimmed.fastq r2_trimmed.fastq > SRR34149117.sam
-
-이건 PBS 제출 스크립트
+tjbae@ngate1:~/snakemake/data/fastq> cat bwa_job_script.sh 
 #!/bin/bash
 
 #PBS -N bwaaa
@@ -16,14 +9,13 @@ ${bwa} mem -t 8 ${ref_name} r1_trimmed.fastq r2_trimmed.fastq > SRR34149117.sam
 
 cd $PBS_O_WORKDIR
 aprun -n 9 -N 1 -d 8 bash bwa_script.sh
-
+tjbae@ngate1:~/snakemake/data/fastq> cat bwa_script.sh 
 #!/bin/bash
 
-#PBS -N bwaaa
-#PBS -l select=9:ncpus=8
-#PBS -l walltime=36:00:00
-#PBS -j oe
-#PBS -V
+bwa="/s3/opt/bin/bwa"
+ref_name="/s1/home/extRDA/tjbae/snakemake/data/reference/Homo_sapiens_assembly38.fasta"
+
+${bwa} mem -t 8 -R '@RG\tID:SRR34149117\tSM:SRR34149117\tPL:ILLUMINA\tLB:lib1\tPU:unit1' ${ref_name} SRR34149117_trimmed1.fastq SRR34149117_trimmed2.fastq > SRR34149117.sam
 
 
 제출 전 해야할 것
