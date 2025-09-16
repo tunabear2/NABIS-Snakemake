@@ -1,0 +1,59 @@
+Bootstrap: docker
+From: rockylinux:8
+
+%environment
+export PATH="/usr/local/bin:${PATH}"
+export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64:${LD_LIBRARY_PATH}"
+
+%post
+set -euo pipefail
+
+# 기본 패키지 설치
+dnf -y install dnf-plugins-core epel-release
+dnf config-manager --set-enabled powertools
+dnf -y makecache
+dnf -y update
+dnf -y install \
+    git wget curl which \
+    gcc-c++ make cmake \
+    autoconf automake libtool \
+    yasm nasm \
+    zlib-devel \
+    file ca-certificates \
+    procps-ng
+
+# ISA-L 빌드
+cd /opt
+git clone https://github.com/intel/isa-l.git
+cd isa-l
+./autogen.sh
+./configure
+make -j"$(nproc)"
+make install
+/sbin/ldconfig || ldconfig
+rm -rf /opt/isa-l
+
+# libdeflate 빌드
+cd /opt
+git clone https://github.com/ebiggers/libdeflate.git
+cd libdeflate
+mkdir build && cd build
+cmake ..
+make -j"$(nproc)"
+make install
+/sbin/ldconfig || ldconfig
+rm -rf /opt/libdeflate
+
+# fastp 빌드
+cd /opt
+git clone https://github.com/OpenGene/fastp.git
+cd fastp
+make -j"$(nproc)"
+install -m 0755 fastp /usr/local/bin/fastp
+rm -rf /opt/fastp
+
+# 캐시 정리
+dnf -y clean all
+
+%runscript
+exec /usr/local/bin/fastp "$@"
