@@ -1,0 +1,86 @@
+Bootstrap: docker
+From: debian:9
+
+%environment
+export PATH="/usr/local/bin:${PATH}"
+export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64:${LD_LIBRARY_PATH}"
+
+%post
+set -eu
+
+echo "deb http://archive.debian.org/debian stretch main" > /etc/apt/sources.list
+echo "deb http://archive.debian.org/debian-security stretch/updates main" >> /etc/apt/sources.list
+
+# 기본 패키지 설치
+apt-get -y update --allow-unauthenticated
+apt-get -y upgrade --allow-unauthenticated
+apt-get -y install \
+    git wget curl \
+    build-essential \
+    autoconf automake libtool \
+    yasm \
+    zlib1g-dev \
+    libssl-dev \
+    file ca-certificates \
+    procps
+
+apt-get -y remove --purge yasm
+
+cd /opt
+NASM_VERSION=2.16.01
+wget https://www.nasm.us/pub/nasm/releasebuilds/${NASM_VERSION}/nasm-${NASM_VERSION}.tar.xz
+tar xvf nasm-${NASM_VERSION}.tar.xz
+cd nasm-${NASM_VERSION}
+./configure --prefix=/usr/local
+make -j"$(nproc)"
+make install
+rm -rf /opt/nasm-${NASM_VERSION} /opt/nasm-${NASM_VERSION}.tar.xz
+cd /
+
+cd /opt
+CMAKE_VERSION=3.27.7
+wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}.tar.gz
+tar -xvf cmake-${CMAKE_VERSION}.tar.gz
+cd cmake-${CMAKE_VERSION}
+./bootstrap --prefix=/usr/local
+make -j"$(nproc)"
+make install
+rm -rf /opt/cmake-${CMAKE_VERSION} /opt/cmake-${CMAKE_VERSION}.tar.gz
+cd /
+
+# ISA-L 빌드
+cd /opt
+git clone https://github.com/intel/isa-l.git
+cd isa-l
+./autogen.sh
+./configure
+make -j"$(nproc)"
+make install
+/sbin/ldconfig || ldconfig
+rm -rf /opt/isa-l
+
+# libdeflate 빌드
+cd /opt
+git clone https://github.com/ebiggers/libdeflate.git
+cd libdeflate
+mkdir build && cd build
+cmake ..
+make -j"$(nproc)"
+make install
+/sbin/ldconfig || ldconfig
+rm -rf /opt/libdeflate
+
+# fastp 빌드
+cd /opt
+git clone https://github.com/OpenGene/fastp.git
+cd fastp
+make -j"$(nproc)"
+install -m 0755 fastp /usr/local/bin/fastp
+rm -rf /opt/fastp
+
+# 캐시 정리
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+%runscript
+exec /usr/local/bin/fastp "$@"
