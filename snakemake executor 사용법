@@ -15,3 +15,4 @@ tjbae@ngate1:~> singularity exec snakemake2.simg /opt/conda/bin/python3 - <<'PY'
 python = /opt/conda/bin/python3
 cluster-generic plugin OK
 이렇게 진행하면 snakemake_executor_plugin_cluster_generic을 python에 plugin 등록할 수 있는 것 같음.
+/opt/pbs/default/bin/qsub
