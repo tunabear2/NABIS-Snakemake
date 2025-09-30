@@ -1,0 +1,53 @@
+Bootstrap: docker
+From: debian:9
+
+%environment
+export MAMBA_ROOT_PREFIX="/opt/micromamba"
+export CONDA_PREFIX="/opt/conda"
+export PATH="/opt/conda/bin:/usr/local/bin:${PATH}"
+export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64:${LD_LIBRARY_PATH}"
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
+%post
+set -eu
+
+# stretch 아카이브 미러
+cat > /etc/apt/sources.list <<'EOF'
+deb http://archive.debian.org/debian stretch main
+deb http://archive.debian.org/debian-security stretch/updates main
+EOF
+
+apt-get -y update --allow-unauthenticated
+apt-get -y upgrade --allow-unauthenticated
+apt-get -y install --no-install-recommends \
+  ca-certificates curl bzip2 xz-utils tar \
+  bash git procps libstdc++6
+
+# micromamba 설치
+mkdir -p /usr/local/bin
+cd /tmp
+curl -L "https://micromamba.snakepit.net/api/micromamba/linux-64/latest" -o micromamba.tar.bz2
+tar -xvjf micromamba.tar.bz2
+mv bin/micromamba /usr/local/bin/micromamba
+chmod 0755 /usr/local/bin/micromamba
+rm -rf micromamba.tar.bz2 bin
+
+# Snakemake 환경 생성
+mkdir -p /opt/conda
+/usr/local/bin/micromamba create -y -p /opt/conda -c conda-forge -c bioconda \
+  python=3.11 "snakemake=9.9" mamba graphviz git
+
+# 캐시 정리
+/opt/conda/bin/micromamba clean -a -y || true
+ln -s /opt/conda/bin/snakemake /usr/local/bin/snakemake || true
+
+apt-get clean
+rm -rf /var/lib/apt/lists/* /tmp/*
+
+%test
+/usr/local/bin/snakemake --version
+
+singularity 2.6.1 버전으로 했음
+%runscript
+exec /usr/local/bin/snakemake "$@"
