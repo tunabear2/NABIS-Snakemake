@@ -30,3 +30,4 @@ $ wget https://github.com/sylabs/singularity/releases/download/$VER/singularity-
 
 $ tar xvf singularity-$VER.tar.gz
 ```
+sudo singularity build --writable fastp.simg fastp.def 명령어로 변환
